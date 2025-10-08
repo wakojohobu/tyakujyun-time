@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ラインスキャン判定（赤白着順＋ストップウォッチ対応）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { font-family: 'Inter', sans-serif; }
+  #result-container { overflow-x: auto; white-space: nowrap; cursor: grab; }
+  #capture-canvas { position: fixed; top: -9999px; left: -9999px; }
+  #video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index:10; }
+  .scan-line { position:absolute; top:0; height:100%; pointer-events:none; opacity:0.75; z-index:30; }
+  .team-label { position:absolute; font-weight:bold; color:white; text-shadow:0 0 3px black; font-size:14px; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+<div class="max-w-4xl mx-auto">
+<h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">📸 ラインスキャン判定（赤白着順＋ストップウォッチ）</h1>
+
+<div id="message-box" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded-lg mb-6 shadow-md">
+<p class="font-bold">🏁 スキャン準備</p>
+<p class="text-sm">カメラを起動して、スリット幅・ライン位置を設定してください。</p>
+</div>
+
+<div id="video-wrapper" class="relative w-full aspect-video bg-gray-800 rounded-xl overflow-hidden shadow-2xl mb-6 flex justify-center items-center">
+  <video id="video" playsinline autoplay muted class="hidden"></video>
+  <p id="video-placeholder" class="text-white text-center z-20">カメラ映像の準備中...</p>
+  <div id="scan-line" class="scan-line bg-red-500" style="left:50%; width:2px;"></div>
+</div>
+
+<div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
+  <div class="flex flex-col w-full md:w-1/3">
+    <label for="camera-select" class="text-gray-700 text-sm font-semibold mb-1">カメラ選択:</label>
+    <select id="camera-select" class="p-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-800 w-full" disabled>
+      <option value="">カメラを起動すると選択できます</option>
+    </select>
+  </div>
+  <div class="flex flex-col md:flex-row gap-4 w-full md:w-auto md:ml-4">
+    <button id="setup-camera-button" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md" onclick="setupCamera()">📷 カメラ起動</button>
+    <button id="start-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md" onclick="startScanning()" disabled>▶️ スキャン開始</button>
+    <button id="stop-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md hidden" onclick="stopScanning()">⏹️ スキャン停止</button>
+  </div>
+</div>
+
+<div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row gap-4 items-center">
+  <div class="flex items-center space-x-4">
+    <label for="scan-offset" class="text-gray-700 text-sm font-semibold whitespace-nowrap">判定ライン位置:</label>
+    <input type="range" id="scan-offset" min="-150" max="150" value="0" step="1" class="w-48 h-2 bg-gray-200 rounded-lg cursor-pointer">
+    <span id="offset-value" class="text-indigo-600 font-bold w-10 text-right">0</span>
+  </div>
+  <div class="flex items-center space-x-4">
+    <label for="slit-width" class="text-gray-700 text-sm font-semibold">スリット幅:</label>
+    <input type="range" id="slit-width" min="1" max="10" value="2" step="1" class="w-32 h-2 bg-gray-200 rounded-lg cursor-pointer">
+    <span id="slit-value" class="text-indigo-600 font-bold w-6 text-right">2</span>
+  </div>
+</div>
+
+<!-- ストップウォッチ UI -->
+<div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row gap-4 items-center justify-center">
+  <div class="text-center mr-6">
+    <span class="text-gray-700 font-semibold">⏱ ストップウォッチ:</span>
+    <span id="stopwatch-display" class="text-indigo-600 font-bold ml-2">0.00</span> 秒
+  </div>
+  <div class="flex gap-3">
+    <button id="sw-start" class="bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded">スタート</button>
+    <button id="sw-stop" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded">ストップ</button>
+    <button id="sw-reset" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded">リセット</button>
+  </div>
+</div>
+
+<h2 class="text-xl font-semibold text-gray-800 mb-3">判定結果 (ラインスキャン画像)</h2>
+<div id="result-container" class="w-full h-80 bg-gray-900 rounded-xl shadow-inner border border-gray-300 overflow-x-scroll">
+  <canvas id="result-canvas" class="h-full"></canvas>
+</div>
+<p class="text-sm text-gray-600 mt-2">左右にスクロールして着順とタイムを確認してください。</p>
+
+<div class="mt-6 text-center">
+  <button id="download-button" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hidden" onclick="downloadResult()">⬇️ 判定画像をダウンロード</button>
+</div>
+
+<canvas id="capture-canvas"></canvas>
+
+<script>
+const video = document.getElementById('video');
+const videoPlaceholder = document.getElementById('video-placeholder');
+const captureCanvas = document.getElementById('capture-canvas');
+const captureCtx = captureCanvas.getContext('2d');
+const resultCanvas = document.getElementById('result-canvas');
+const resultCtx = resultCanvas.getContext('2d');
+const setupCameraButton = document.getElementById('setup-camera-button');
+const startButton = document.getElementById('start-button');
+const stopButton = document.getElementById('stop-button');
+const downloadButton = document.getElementById('download-button');
+const messageBox = document.getElementById('message-box');
+const scanLine = document.getElementById('scan-line');
+const scanOffsetInput = document.getElementById('scan-offset');
+const offsetValueSpan = document.getElementById('offset-value');
+const slitInput = document.getElementById('slit-width');
+const slitValueSpan = document.getElementById('slit-value');
+const resultContainer = document.getElementById('result-container');
+const cameraSelect = document.getElementById('camera-select');
+
+let stream = null;
+let scanning = false;
+let scanX = 0;
+let animationFrameId = null;
+let videoDevices = [];
+const FRAME_HEIGHT = 320;
+
+// スリット位置と幅設定
+scanOffsetInput.addEventListener('input', e => {
+  const val = parseInt(e.target.value);
+  offsetValueSpan.textContent = val;
+  scanLine.style.left = `calc(50% + ${val}px)`;
+});
+slitInput.addEventListener('input', e => {
+  const val = parseInt(e.target.value);
+  slitValueSpan.textContent = val;
+});
+
+// カメラデバイス取得
+async function updateDeviceList(selectedId=null){
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  videoDevices = devices.filter(d=>d.kind==='videoinput');
+  cameraSelect.innerHTML='';
+  if(videoDevices.length===0){ cameraSelect.disabled=true; cameraSelect.innerHTML='<option>カメラなし</option>'; return;}
+  videoDevices.forEach(d=>{
+    const opt=document.createElement('option'); opt.value=d.deviceId; opt.text=d.label||'カメラ '+(videoDevices.indexOf(d)+1); cameraSelect.appendChild(opt);
+  });
+  cameraSelect.disabled=false;
+  cameraSelect.value=selectedId||videoDevices[0].deviceId;
+}
+
+cameraSelect.addEventListener('change', ()=>{if(scanning) stopScanning(); setupCamera(cameraSelect.value);});
+
+async function setupCamera(deviceId=null){
+  if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+  setupCameraButton.disabled=true; startButton.disabled=true; cameraSelect.disabled=true;
+  messageBox.className='bg-blue-100 border-l-4 border-blue-500 text-blue-800 p-4 rounded-lg mb-6 shadow-md';
+  messageBox.innerHTML='<p class="font-bold">カメラ起動中...</p>';
+  let constraints={video:{frameRate:{ideal:60}}, audio:false};
+  if(deviceId) constraints.video.deviceId={exact:deviceId}; else constraints.video.facingMode='environment';
+  try{
+    stream=await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject=stream;
+    await video.play();
+    video.classList.remove('hidden'); videoPlaceholder.classList.add('hidden');
+    await updateDeviceList(stream.getVideoTracks()[0].getSettings().deviceId);
+    startButton.disabled=false;
+    cameraSelect.disabled=false;
+    messageBox.className='bg-green-100 border-l-4 border-green-500 text-green-800 p-4 rounded-lg mb-6 shadow-md';
+    messageBox.innerHTML='<p class="font-bold">✅ カメラ準備完了</p>';
+  }catch(err){
+    console.error(err); messageBox.className='bg-red-100 border-l-4 border-red-500 text-red-800 p-4 rounded-lg mb-6 shadow-md';
+    messageBox.innerHTML='<p class="font-bold">❌ カメラ起動失敗</p><p>'+err.message+'</p>'; setupCameraButton.disabled=false;
+  }
+}
+
+// ストップウォッチ
+let stopwatchTime = 0;
+let stopwatchRunning = false;
+let stopwatchInterval = null;
+const stopwatchDisplay = document.getElementById('stopwatch-display');
+
+function updateStopwatchDisplay(){ stopwatchDisplay.textContent = stopwatchTime.toFixed(2); }
+function startStopwatch(){
+  if(stopwatchRunning) return;
+  stopwatchRunning = true;
+  const startTimestamp = performance.now() - stopwatchTime*1000;
+  stopwatchInterval = requestAnimationFrame(function update(ts){
+    stopwatchTime = (ts - startTimestamp)/1000;
+    updateStopwatchDisplay();
+    if(stopwatchRunning) stopwatchInterval = requestAnimationFrame(update);
+  });
+}
+function stopStopwatch(){
+  stopwatchRunning = false;
+  if(stopwatchInterval) cancelAnimationFrame(stopwatchInterval);
+}
+function resetStopwatch(){
+  stopwatchRunning = false;
+  if(stopwatchInterval) cancelAnimationFrame(stopwatchInterval);
+  stopwatchTime = 0;
+  updateStopwatchDisplay();
+}
+document.getElementById('sw-start').addEventListener('click', startStopwatch);
+document.getElementById('sw-stop').addEventListener('click', stopStopwatch);
+document.getElementById('sw-reset').addEventListener('click', resetStopwatch);
+
+// スキャン処理
+function processFrame(){
+  if(!scanning||video.paused||video.ended) return;
+  captureCanvas.width=video.videoWidth; captureCanvas.height=video.videoHeight;
+  captureCtx.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
+
+  const offset = parseInt(scanOffsetInput.value);
+  const slit = parseInt(slitInput.value);
+  const x = Math.floor(captureCanvas.width/2)+offset;
+
+  const resultWidth = resultCanvas.width;
+  let existingData=null;
+  if(resultWidth>0){try{existingData=resultCtx.getImageData(0,0,resultWidth,FRAME_HEIGHT);}catch(e){console.warn(e);} }
+  resultCanvas.width=resultWidth+slit; resultCanvas.height=FRAME_HEIGHT;
+  if(existingData) resultCtx.putImageData(existingData,0,0);
+
+  const imageData=captureCtx.getImageData(x,0,slit,captureCanvas.height);
+  const tempCanvas=document.createElement('canvas');
+  const tempCtx=tempCanvas.getContext('2d');
+  tempCanvas.width=slit; tempCanvas.height=captureCanvas.height;
+  tempCtx.putImageData(imageData,0,0);
+
+  // 赤白判定
+  const pixels=imageData.data;
+  let sumR=0,sumG=0,sumB=0;
+  for(let i=0;i<pixels.length;i+=4){sumR+=pixels[i]; sumG+=pixels[i+1]; sumB+=pixels[i+2];}
+  const avgR=sumR/(pixels.length/4), avgG=sumG/(pixels.length/4), avgB=sumB/(pixels.length/4);
+  let color='none'; if(avgR>150 && avgR>avgG && avgR>avgB) color='red';
+  else if(avgB>150 && avgB>avgR && avgB>avgG) color='white';
+
+  // 描画
+  resultCtx.drawImage(tempCanvas,resultWidth,0,slit,FRAME_HEIGHT);
+  if(color!=='none'){
+    resultCtx.fillStyle=color==='red'?'rgba(255,0,0,0.7)':'rgba(255,255,255,0.7)';
+    resultCtx.fillRect(resultWidth,0,slit,FRAME_HEIGHT);
+    resultCtx.fillStyle='yellow';
+    resultCtx.font='bold 14px sans-serif';
+    resultCtx.fillText(`${scanX+1} (${stopwatchTime.toFixed(2)}s)`, resultWidth+2, 20);
+  }
+
+  scanX+=1;
+  resultContainer.scrollLeft=resultContainer.scrollWidth;
+  if(scanning) animationFrameId=requestAnimationFrame(processFrame);
+}
+
+function startScanning(){
+  if(!stream||startButton.disabled){messageBox.className='bg-red-100 border-l-4 border-red-500 text-red-800 p-4 rounded-lg mb-6 shadow-md'; messageBox.innerHTML='<p>先にカメラ起動してください</p>'; return;}
+  scanning=true; scanX=0; startButton.classList.add('hidden'); stopButton.classList.remove('hidden'); downloadButton.classList.add('hidden'); cameraSelect.disabled=true;
+  resultCanvas.width=1; resultCtx.clearRect(0,0,resultCanvas.width,resultCanvas.height);
+  animationFrameId=requestAnimationFrame(processFrame);
+  messageBox.className='bg-indigo-100 border-l-4 border-indigo-500 text-indigo-800 p-4 rounded-lg mb-6 shadow-md';
+  messageBox.innerHTML='<p class="font-bold">🟢 スキャン中...</p>';
+}
+
+function stopScanning(){
+  scanning=false; cancelAnimationFrame(animationFrameId);
+  startButton.classList.remove('hidden'); stopButton.classList.add('hidden'); downloadButton.classList.remove('hidden'); cameraSelect.disabled=false;
+  stopStopwatch(); // ストップウォッチも停止
+  messageBox.className='bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded-lg mb-6 shadow-md';
+  messageBox.innerHTML='<p class="font-bold">⏸️ スキャン停止</p>';
+}
+
+function downloadResult(){
+  const a=document.createElement('a');
+  a.href=resultCanvas.toDataURL('image/png');
+  a.download=`LineScan_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.png`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// ドラッグ操作
+let isDown=false, startX, scrollLeft;
+resultContainer.addEventListener('mousedown',e=>{isDown=true; resultContainer.style.cursor='grabbing'; startX=e.pageX-resultContainer.offsetLeft; scrollLeft=resultContainer.scrollLeft;});
+resultContainer.addEventListener('mouseleave',()=>{isDown=false; resultContainer.style.cursor='grab';});
+resultContainer.addEventListener('mouseup',()=>{isDown=false; resultContainer.style.cursor='grab';});
+resultContainer.addEventListener('mousemove',e=>{if(!isDown) return; e.preventDefault(); const x=e.pageX-resultContainer.offsetLeft; resultContainer.scrollLeft=scrollLeft-(x-startX)*1.5;});
+resultContainer.addEventListener('touchstart',e=>{isDown=true; startX=e.touches[0].pageX-resultContainer.offsetLeft; scrollLeft=resultContainer.scrollLeft;});
+resultContainer.addEventListener('touchend',()=>{isDown=false;});
+resultContainer.addEventListener('touchmove',e=>{if(!isDown) return; const x=e.touches[0].pageX-resultContainer.offsetLeft; resultContainer.scrollLeft=scrollLeft-(x-startX)*1.5;});
+</script>
+</body>
+</html>
