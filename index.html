@@ -3,45 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>着順判定らくらくタイム君</title>
+<title>ラインスキャン判定＋タイムライン＋ストップウォッチ</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   :root { font-family: 'Inter', sans-serif; }
-  #result-container { overflow-x: auto; white-space: nowrap; cursor: grab; position: relative; }
+  #result-container { overflow-x: auto; white-space: nowrap; cursor: grab; position: relative; background:#111; }
   #capture-canvas { position: fixed; top: -9999px; left: -9999px; }
   #video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index:10; }
-  .scan-line { position:absolute; top:0; height:100%; pointer-events:none; opacity:0.75; z-index:30; }
+  .scan-line { position:absolute; top:0; height:100%; pointer-events:none; opacity:0.75; z-index:30; width:2px; background:red;}
   .timeline-line { position:absolute; top:0; height:100%; width:2px; pointer-events:auto; cursor:grab; z-index:50; }
-  .timeline-slider { position:absolute; width:30px; height:6px; background:rgba(255,255,255,0.5); top:0; left:-14px; border-radius:3px; cursor:ew-resize; z-index:55; }
 </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 md:p-8">
-<div class="max-w-4xl mx-auto">
-<h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">📸 着順判定らくらくタイム君</h1>
+<div class="max-w-5xl mx-auto">
+<h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">📸 ラインスキャン判定＋タイムライン＋ストップウォッチ</h1>
 
-<div id="message-box" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded-lg mb-6 shadow-md">
-<p class="font-bold">🏁 スキャン準備</p>
-<p class="text-sm">カメラを起動して、スリット幅・ライン位置を設定してください。</p>
+<div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-wrap gap-4 items-center">
+  <button id="setup-camera-button" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md">📷 カメラ起動</button>
+  <button id="sw-start" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-md">⏱️ 開始</button>
+  <button id="sw-stop" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">⏹️ 停止</button>
+  <button id="sw-reset" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg shadow-md">🔄 リセット</button>
+  <span id="sw-display" class="ml-4 font-bold text-lg">0.00 s</span>
 </div>
 
 <div id="video-wrapper" class="relative w-full aspect-video bg-gray-800 rounded-xl overflow-hidden shadow-2xl mb-6 flex justify-center items-center">
   <video id="video" playsinline autoplay muted class="hidden"></video>
   <p id="video-placeholder" class="text-white text-center z-20">カメラ映像の準備中...</p>
-  <div id="scan-line" class="scan-line bg-red-500" style="left:50%; width:2px;"></div>
-</div>
-
-<div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
-  <div class="flex flex-col w-full md:w-1/3">
-    <label for="camera-select" class="text-gray-700 text-sm font-semibold mb-1">カメラ選択:</label>
-    <select id="camera-select" class="p-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-800 w-full" disabled>
-      <option value="">カメラを起動すると選択できます</option>
-    </select>
-  </div>
-  <div class="flex flex-col md:flex-row gap-4 w-full md:w-auto md:ml-4">
-    <button id="setup-camera-button" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md">📷 カメラ起動</button>
-    <button id="start-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md" disabled>▶️ スキャン開始</button>
-    <button id="stop-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md hidden">⏹️ スキャン停止</button>
-  </div>
+  <div id="scan-line" class="scan-line"></div>
 </div>
 
 <div class="bg-white p-5 rounded-xl shadow-lg mb-6 flex flex-col md:flex-row gap-4 items-center">
@@ -61,7 +49,7 @@
 <div id="result-container" class="w-full h-80 bg-gray-900 rounded-xl shadow-inner border border-gray-300 overflow-x-scroll relative">
   <canvas id="result-canvas" class="h-full"></canvas>
 </div>
-<p class="text-sm text-gray-600 mt-2">左右にスクロールして着順を確認してください。クリックでタイムライン（縦線）を追加できます。</p>
+<p class="text-sm text-gray-600 mt-2">左右にスクロールして着順を確認してください。クリックで縦線（タイムライン）を追加可能。</p>
 
 <div class="mt-6 text-center">
   <button id="download-button" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hidden">⬇️ 判定画像をダウンロード</button>
@@ -71,196 +59,143 @@
 
 <script>
 const video = document.getElementById('video');
-const videoPlaceholder = document.getElementById('video-placeholder');
 const captureCanvas = document.getElementById('capture-canvas');
 const captureCtx = captureCanvas.getContext('2d');
 const resultCanvas = document.getElementById('result-canvas');
 const resultCtx = resultCanvas.getContext('2d');
 const setupCameraButton = document.getElementById('setup-camera-button');
-const startButton = document.getElementById('start-button');
-const stopButton = document.getElementById('stop-button');
-const downloadButton = document.getElementById('download-button');
-const messageBox = document.getElementById('message-box');
-const scanLine = document.getElementById('scan-line');
 const scanOffsetInput = document.getElementById('scan-offset');
 const offsetValueSpan = document.getElementById('offset-value');
 const slitInput = document.getElementById('slit-width');
 const slitValueSpan = document.getElementById('slit-value');
 const resultContainer = document.getElementById('result-container');
-const cameraSelect = document.getElementById('camera-select');
+const scanLine = document.getElementById('scan-line');
+const swDisplay = document.getElementById('sw-display');
+const swStart = document.getElementById('sw-start');
+const swStop = document.getElementById('sw-stop');
+const swReset = document.getElementById('sw-reset');
+const downloadButton = document.getElementById('download-button');
 
-let stream = null;
-let scanning = false;
-let scanX = 0;
-let animationFrameId = null;
-let videoDevices = [];
-let stopwatchStart = null;
-let columnTimes = []; // 各列の通過タイム
-let timelines = []; // 縦線情報 {x,color}
+let stream=null, scanning=false, animationFrameId=null;
+let scanX=0, FRAME_HEIGHT=320;
+let columnTimes=[];
+let timelines=[]; // {x,color}
+let stopwatchStart=null, stopwatchElapsed=0, stopwatchInterval=null;
 
 // スリット位置と幅設定
-scanOffsetInput.addEventListener('input', e => {
-  const val = parseInt(e.target.value);
-  offsetValueSpan.textContent = val;
-  scanLine.style.left = `calc(50% + ${val}px)`;
+scanOffsetInput.addEventListener('input',e=>{
+  const val=parseInt(e.target.value);
+  offsetValueSpan.textContent=val;
+  scanLine.style.left=`calc(50% + ${val}px)`;
 });
-slitInput.addEventListener('input', e => {
-  const val = parseInt(e.target.value);
-  slitValueSpan.textContent = val;
+slitInput.addEventListener('input',e=>{
+  const val=parseInt(e.target.value);
+  slitValueSpan.textContent=val;
 });
 
-// カメラデバイス取得
-async function updateDeviceList(selectedId=null){
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  videoDevices = devices.filter(d=>d.kind==='videoinput');
-  cameraSelect.innerHTML='';
-  if(videoDevices.length===0){ cameraSelect.disabled=true; cameraSelect.innerHTML='<option>カメラなし</option>'; return;}
-  videoDevices.forEach(d=>{
-    const opt=document.createElement('option'); opt.value=d.deviceId; opt.text=d.label||'カメラ '+(videoDevices.indexOf(d)+1); cameraSelect.appendChild(opt);
-  });
-  cameraSelect.disabled=false;
-  cameraSelect.value=selectedId||videoDevices[0].deviceId;
+// ストップウォッチ
+function updateSWDisplay(){
+  if(stopwatchStart) stopwatchElapsed = performance.now() - stopwatchStart;
+  swDisplay.textContent = (stopwatchElapsed/1000).toFixed(2) + ' s';
 }
+swStart.addEventListener('click',()=>{
+  if(!stopwatchStart) stopwatchStart = performance.now() - stopwatchElapsed;
+  if(!stopwatchInterval) stopwatchInterval = setInterval(updateSWDisplay,33);
+});
+swStop.addEventListener('click',()=>{ stopwatchStart=null; clearInterval(stopwatchInterval); stopwatchInterval=null; });
+swReset.addEventListener('click'=>{ stopwatchStart=null; stopwatchElapsed=0; updateSWDisplay(); clearInterval(stopwatchInterval); stopwatchInterval=null; });
 
-cameraSelect.addEventListener('change', ()=>{if(scanning) stopScanning(); setupCamera(cameraSelect.value);});
-
-setupCameraButton.addEventListener('click', ()=>setupCamera());
-
-async function setupCamera(deviceId=null){
+// カメラ起動
+setupCameraButton.addEventListener('click',async()=>{
   if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
-  setupCameraButton.disabled=true; startButton.disabled=true; cameraSelect.disabled=true;
-  messageBox.className='bg-blue-100 border-l-4 border-blue-500 text-blue-800 p-4 rounded-lg mb-6 shadow-md';
-  messageBox.innerHTML='<p class="font-bold">カメラ起動中...</p>';
-  let constraints={video:{frameRate:{ideal:60}}, audio:false};
-  if(deviceId) constraints.video.deviceId={exact:deviceId}; else constraints.video.facingMode='environment';
   try{
-    stream=await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject=stream;
-    await video.play();
-    video.classList.remove('hidden'); videoPlaceholder.classList.add('hidden');
-    await updateDeviceList(stream.getVideoTracks()[0].getSettings().deviceId);
-    startButton.disabled=false;
-    cameraSelect.disabled=false;
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',frameRate:{ideal:60}},audio:false});
+    video.srcObject=stream; await video.play(); video.classList.remove('hidden');
+    messageBox=document.getElementById('message-box');
     messageBox.className='bg-green-100 border-l-4 border-green-500 text-green-800 p-4 rounded-lg mb-6 shadow-md';
     messageBox.innerHTML='<p class="font-bold">✅ カメラ準備完了</p>';
-  }catch(err){
-    console.error(err); messageBox.className='bg-red-100 border-l-4 border-red-500 text-red-800 p-4 rounded-lg mb-6 shadow-md';
-    messageBox.innerHTML='<p class="font-bold">❌ カメラ起動失敗</p><p>'+err.message+'</p>'; setupCameraButton.disabled=false;
-  }
+  }catch(err){ alert('カメラ起動失敗: '+err.message);}
+});
+
+// スキャン開始
+function startScanning(){
+  if(!stream){ alert('カメラを起動してください'); return; }
+  scanning=true; scanX=0; columnTimes=[]; resultCanvas.width=1; resultCtx.clearRect(0,0,resultCanvas.width,resultCanvas.height);
+  animationFrameId=requestAnimationFrame(processFrame);
 }
+function stopScanning(){ scanning=false; cancelAnimationFrame(animationFrameId); stopwatchStart=null; clearInterval(stopwatchInterval); stopwatchInterval=null; }
 
 // スキャン処理
 function processFrame(){
   if(!scanning||video.paused||video.ended) return;
   captureCanvas.width=video.videoWidth; captureCanvas.height=video.videoHeight;
   captureCtx.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
-
-  const offset = parseInt(scanOffsetInput.value);
-  const slit = parseInt(slitInput.value);
+  const offset=parseInt(scanOffsetInput.value);
+  const slit=parseInt(slitInput.value);
   const x = Math.floor(captureCanvas.width/2)+offset;
 
-  const resultWidth = resultCanvas.width;
-  let existingData=null;
-  if(resultWidth>0){try{existingData=resultCtx.getImageData(0,0,resultWidth,resultCanvas.height);}catch(e){console.warn(e);}}
-  resultCanvas.width=resultWidth+slit; resultCanvas.height=320;
-  if(existingData) resultCtx.putImageData(existingData,0,0);
+  // 時間記録
+  const time = performance.now()/1000;
+  columnTimes.push(time);
 
+  // 結果キャンバス更新
+  const resultWidth=resultCanvas.width;
   const imageData=captureCtx.getImageData(x,0,slit,captureCanvas.height);
   const tempCanvas=document.createElement('canvas');
-  const tempCtx=tempCanvas.getContext('2d');
   tempCanvas.width=slit; tempCanvas.height=captureCanvas.height;
-  tempCtx.putImageData(imageData,0,0);
+  tempCanvas.getContext('2d').putImageData(imageData,0,0);
+  resultCanvas.width=resultWidth+slit; resultCanvas.height=FRAME_HEIGHT;
+  resultCtx.drawImage(tempCanvas,resultWidth,0,slit,FRAME_HEIGHT);
 
-  // 列ごとのタイム保存
-  const elapsed = stopwatchStart ? performance.now() - stopwatchStart : 0;
-  for(let i=0;i<slit;i++){
-    columnTimes.push(elapsed);
-  }
-
-  resultCtx.drawImage(tempCanvas,resultWidth,0,slit,320);
-
-  // 縦線タイム表示
+  // 縦線描画＆タイム表示
   timelines.forEach(t=>{
-    const colIndex = Math.min(Math.floor(t.x), columnTimes.length-1);
-    const time = columnTimes[colIndex] || 0;
-    resultCtx.fillStyle = t.color;
-    resultCtx.fillRect(t.x,0,2,320);
-
-    // 半透明背景付きタイム表示
-    const text = (time/1000).toFixed(2)+'s';
-    const textWidth = resultCtx.measureText(text).width;
-    resultCtx.fillStyle='rgba(0,0,0,0.5)';
+    resultCtx.strokeStyle = t.color; resultCtx.lineWidth=2;
+    resultCtx.beginPath();
+    resultCtx.moveTo(t.x,0);
+    resultCtx.lineTo(t.x,FRAME_HEIGHT);
+    resultCtx.stroke();
+    // 時間表示
+    const idx = Math.min(Math.floor(t.x), columnTimes.length-1);
+    const displayTime = columnTimes[idx]!==undefined ? columnTimes[idx].toFixed(2)+'s':'-';
+    resultCtx.fillStyle='rgba(0,0,0,0.6)';
     resultCtx.fillRect(t.x-20,0,40,18);
     resultCtx.fillStyle='white';
     resultCtx.font='12px sans-serif';
     resultCtx.textAlign='center';
-    resultCtx.fillText(text,t.x,13);
+    resultCtx.fillText(displayTime, t.x, 14);
   });
 
-  scanX+=1;
+  scanX++;
   resultContainer.scrollLeft=resultContainer.scrollWidth;
   if(scanning) animationFrameId=requestAnimationFrame(processFrame);
 }
 
-function startScanning(){
-  if(!stream||startButton.disabled){messageBox.className='bg-red-100 border-l-4 border-red-500 text-red-800 p-4 rounded-lg mb-6 shadow-md'; messageBox.innerHTML='<p>先にカメラ起動してください</p>'; return;}
-  scanning=true; scanX=0; startButton.classList.add('hidden'); stopButton.classList.remove('hidden'); downloadButton.classList.add('hidden'); cameraSelect.disabled=true;
-  stopwatchStart = performance.now();
-  resultCanvas.width=1; resultCtx.clearRect(0,0,resultCanvas.width,resultCanvas.height);
-  columnTimes=[];
-  animationFrameId=requestAnimationFrame(processFrame);
-  messageBox.className='bg-indigo-100 border-l-4 border-indigo-500 text-indigo-800 p-4 rounded-lg mb-6 shadow-md';
-  messageBox.innerHTML='<p class="font-bold">🟢 スキャン中...</p>';
-}
-
-function stopScanning(){
-  scanning=false; cancelAnimationFrame(animationFrameId);
-  startButton.classList.remove('hidden'); stopButton.classList.add('hidden'); downloadButton.classList.remove('hidden'); cameraSelect.disabled=false;
-  messageBox.className='bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded-lg mb-6 shadow-md';
-  messageBox.innerHTML='<p class="font-bold">⏸️ スキャン停止</p>';
-}
-
 // クリックで縦線追加
-resultCanvas.addEventListener('click', e=>{
-  const rect = resultCanvas.getBoundingClientRect();
+resultCanvas.addEventListener('click',e=>{
+  const rect=resultCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left + resultContainer.scrollLeft;
-  const color = `hsl(${Math.random()*360},80%,60%)`;
-  timelines.push({x,color,dragging:false});
+  timelines.push({x,color:`hsl(${Math.random()*360},80%,60%)`});
 });
 
-// ダウンロード
-downloadButton.addEventListener('click', ()=>{
-  const a=document.createElement('a');
-  a.href=resultCanvas.toDataURL('image/png');
-  a.download=`LineScan_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.png`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-});
-
-// ドラッグ操作
-let isDown=false, startX, selectedTimeline=null;
-resultCanvas.addEventListener('mousedown',e=>{
-  const rect = resultCanvas.getBoundingClientRect();
+// 縦線ドラッグ
+let draggingTimeline=null, dragStartX=0;
+resultCanvas.addEventListener('mousedown', e=>{
+  const rect=resultCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left + resultContainer.scrollLeft;
-  timelines.forEach(t=>{
-    if(Math.abs(x-t.x)<5){ selectedTimeline=t; t.dragging=true; }
-  });
-  isDown=!!selectedTimeline; startX=x;
+  timelines.forEach(t=>{ if(Math.abs(x-t.x)<5){ draggingTimeline=t; dragStartX=x; }});
 });
-document.addEventListener('mouseup',()=>{ if(selectedTimeline) selectedTimeline.dragging=false; isDown=false; selectedTimeline=null; });
-document.addEventListener('mousemove',e=>{
-  if(!isDown || !selectedTimeline) return;
-  const rect = resultCanvas.getBoundingClientRect();
+document.addEventListener('mousemove', e=>{
+  if(!draggingTimeline) return;
+  const rect=resultCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left + resultContainer.scrollLeft;
-  selectedTimeline.x += x-startX; startX=x;
+  draggingTimeline.x += x - dragStartX; dragStartX = x;
 });
+document.addEventListener('mouseup',()=>{ draggingTimeline=null; });
 
-resultContainer.addEventListener('mousedown',e=>{isDown=true; startX=e.pageX-resultContainer.offsetLeft; scrollLeft=resultContainer.scrollLeft;});
-resultContainer.addEventListener('mouseleave',()=>{isDown=false; resultContainer.style.cursor='grab';});
-resultContainer.addEventListener('mouseup',()=>{isDown=false; resultContainer.style.cursor='grab';});
-resultContainer.addEventListener('mousemove',e=>{if(!isDown) return; e.preventDefault(); const x=e.pageX-resultContainer.offsetLeft; resultContainer.scrollLeft=scrollLeft-(x-startX)*1.5;});
-resultContainer.addEventListener('touchstart',e=>{isDown=true; startX=e.touches[0].pageX-resultContainer.offsetLeft; scrollLeft=resultContainer.scrollLeft;});
-resultContainer.addEventListener('touchend',()=>{isDown=false;});
-resultContainer.addEventListener('touchmove',e=>{if(!isDown) return; const x=e.touches[0].pageX-resultContainer.offsetLeft; resultContainer.scrollLeft=scrollLeft-(x-startX)*1.5;});
+// 結果ダウンロード
+downloadButton.addEventListener('click',()=>{
+  const a=document.createElement('a'); a.href=resultCanvas.toDataURL('image/png'); a.download=`LineScan_${Date.now()}.png`; a.click();
+});
 </script>
 </body>
 </html>
